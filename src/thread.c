@@ -1563,6 +1563,7 @@ void thread_detect_count(void)
  done:
 	if (global.tune.debug & GDBG_CPU_AFFINITY) {
 		printf("going to start with nbthread=%d nbtgroups=%d\n", global.nbthread, global.nbtgroups);
+		cpu_reorder_by_index(ha_cpu_topo, maxcpus);
 		cpu_dump_topology(ha_cpu_topo, maxcpus);
 	}
 #endif
