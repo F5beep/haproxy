@@ -38,6 +38,9 @@ int cpu_map_configured(void);
  */
 void cpu_dump_topology(const struct ha_cpu_topo *topo, int maxcpus);
 
+/* arrange a CPU topology array according to the configured selection strategy */
+void cpu_optimize_topology(struct ha_cpu_topo *topo, int entries);
+
 /* re-order a CPU topology array by locality to help form groups. */
 void cpu_reorder_by_locality(struct ha_cpu_topo *topo, int entries);
 
