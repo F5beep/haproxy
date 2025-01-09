@@ -31,11 +31,13 @@
 #include <haproxy/api-t.h>
 
 /* Structure defining a buffer's head */
+#define buffer_bin_size 16      /* Space to hold up to 8 code points, e.g for key share groups */
 struct buffer {
 	size_t size;                /* buffer size in bytes */
 	char  *area;                /* points to <size> bytes */
 	size_t data;                /* amount of data after head including wrapping */
 	size_t head;                /* start offset of remaining data relative to area */
+        uint8_t bin[buffer_bin_size]; /* space to hold binary data, used to collect non-consecutive data */
 };
 
 /* A buffer may be in 3 different states :
