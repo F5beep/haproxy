@@ -831,6 +831,35 @@ int cpu_detect_topology(void)
 			ha_cpu_topo[cpu].cl_id = cpu_id.cl_id;
 		}
 	}
+
+	/* and now we must check that CPUs having different LLCs have different
+	 * cluster IDs, otherwise we assign new ones.
+	 */
+	cpu_reorder_by_cluster(ha_cpu_topo, maxcpus);
+
+	for (cpu = 0; cpu < lastcpu; cpu++) {
+		int changed = 0;
+		int cpu2 = cpu + 1;
+
+		while (cpu2 <= lastcpu &&
+		       (ha_cpu_topo[cpu2].cl_id == ha_cpu_topo[cpu].cl_id) &&
+		       ((ha_cpu_topo[cpu2].pk_id != ha_cpu_topo[cpu].pk_id) ||
+		        (ha_cpu_topo[cpu2].no_id != ha_cpu_topo[cpu].no_id) ||
+		        (ha_cpu_topo[cpu2].di_id != ha_cpu_topo[cpu].di_id) ||
+			(ha_cpu_topo[cpu].ca_id[4] != ha_cpu_topo[cpu].ca_id[4]) ||
+			(ha_cpu_topo[cpu].ca_id[4] < 0 && // no l4 ? check L3
+			 ((ha_cpu_topo[cpu].ca_id[3] != ha_cpu_topo[cpu].ca_id[3]) ||
+			  (ha_cpu_topo[cpu].ca_id[3] < 0 && // no l3 ? check L2
+			   (ha_cpu_topo[cpu].ca_id[2] != ha_cpu_topo[cpu].ca_id[2])))))) {
+			ha_cpu_topo[cpu2].cl_id = cpu_id.cl_id;
+			cpu2++;
+			changed = 1;
+		}
+
+		if (changed)
+			cpu_id.cl_id++;
+	}
+
 	cpu_reorder_by_index(ha_cpu_topo, maxcpus);
 
 	return 1;
