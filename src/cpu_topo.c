@@ -157,10 +157,12 @@ void cpu_dump_topology(const struct ha_cpu_topo *topo, int maxcpus)
 	}
 
 	for (cpu = 0; cpu <= lastcpu; cpu++) {
-		printf("thr=%3d -> cpu=%3d onl=%d bnd=%d pk=%02d no=%02d di=%02d cl=%03d",
+		if (ha_cpu_topo[cpu].st & HA_CPU_F_OFFLINE)
+			continue;
+
+		printf("[%s] thr=%3d -> cpu=%3d pk=%02d no=%02d di=%02d cl=%03d",
+		       (ha_cpu_topo[cpu].st & HA_CPU_F_EXCLUDED) ? "----" : "keep",
 		       cpu, ha_cpu_topo[cpu].idx,
-		       !(ha_cpu_topo[cpu].st & HA_CPU_F_OFFLINE),
-		       !(ha_cpu_topo[cpu].st & HA_CPU_F_EXCLUDED),
 		       ha_cpu_topo[cpu].pk_id,
 		       ha_cpu_topo[cpu].di_id,
 		       ha_cpu_topo[cpu].no_id,
