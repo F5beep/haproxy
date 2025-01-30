@@ -1313,3 +1313,63 @@ We could then have:
   - cpu-selection restrict-first-socket,ignore-slowest,...
 
 Then some of the keywords could simply be shortcuts for these.
+
+2025-01-30
+----------
+Problem: we need to set the restrictions first to eliminate undesired CPUs,
+         then sort according to the desired preferences so as to pick what
+         is considered the best CPUs. So the preference really looks like
+         a different setting.
+
+More precisely, the final stategy involves multiple criteria. For example,
+let's say that the number of threads is set to 4 and we've restricted ourselves
+to using the first thread of each CPU core. We're on an EPYC74F3, there are 3
+cores per CCX. One algorithm (resource) would create one group with 3 threads
+on the first CCX and 1 group of 1 thread on the next one, then let each of
+these threads bind to all the enabled CPU cores of their respective groups.
+Another algo (performance) would avoid sharing and would want to place one
+thread per CCX, causing the creation of 4 groups of 1 thread each. A third
+algo (balanced) would probably say that 4 threads require 2 CCX hence 2
+groups, thus there should be 2 threads per group, and it would bind 2 threads
+on all cores of the first CCX and the 2 remaining ones on the second.
+
+And if the thread count is not set, these strategies will also do their best
+to figure the optimal count. Resource would probably use 1 core max, moderate
+one CCX max, balanced one node max, performance all of them.
+
+This means that these CPU selection strategries should provide multiple
+functions:
+  - how to sort CPUs
+  - how to count how many is best within imposed rules
+
+The other actions seem to only be static. This also means that "avoid" or
+"prefer" should maybe not be used in the end, even in the sorting algo ?
+
+Or maybe these are just enums or bits in a strategy and all are considered
+at the same time everywhere. For example the thread counting could consider
+the presence of "avoid-XXX" during the operations. But how to codify XXX is
+complicated then.
+
+Maybe a scoring system could work:
+  - default: all CPUs score = 1000
+  - ignore-XXX: foreach(XXX) set score to 0
+  - restrict-XXX: foreach(YYY not XXX), set score to 0
+  - avoid-XXX: foreach(XXX) score *= 0.8
+  - prefer-XXX: foreach(XXX) score *= 1.25
+
+This supports being ignored for up to 30 different reasons before being
+permanently disabled, which is sufficient.
+
+Then sort according to score, and pick at least min_thr CPUs and continue as
+long as not max_thr or score < 1000 ("avoid"). This gives the thread count. It
+does not permit anything inter-CPU though. E.g. large vs medium vs small cores,
+or sort by locality or frequency. But maybe these ones would use a different
+strategy then and would use the score as a second sorting key (after which
+one?). Or maybe there would be 2 passes, one which avoids <1000 and another
+one which completes up to #min_thr including those <1000, in which case we
+never sort per score.
+
+We can do a bit better to respect the tgrp min/max as well: we can count what
+it implies in terms of number of tgrps (#LLC or clusters) and decide to refrain
+from adding theads which would exceed max_tgrp, but we'd possibly continue to
+add score<1000 CPUs until at least enough threads to reach min_tgrp.
