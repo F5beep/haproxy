@@ -221,7 +221,7 @@ int session_accept_fd(struct connection *cli_conn)
 			cli_conn->flags |= CO_FL_ACCEPT_CIP;
 
 		/* Add the handshake pseudo-XPRT */
-		if (cli_conn->flags & (CO_FL_ACCEPT_PROXY | CO_FL_ACCEPT_CIP)) {
+		if (cli_conn->flags & (CO_FL_ACCEPT_PROXY | CO_FL_ACCEPT_CIP | CO_FL_ACCEPT_QOS)) {
 			if (xprt_add_hs(cli_conn) != 0)
 				goto out_free_conn;
 		}

@@ -50,6 +50,7 @@ extern struct mux_stopping_data mux_stopping_data[MAX_THREADS];
 
 #define IS_HTX_CONN(conn) ((conn)->mux && ((conn)->mux->flags & MX_FL_HTX))
 
+int conn_recv_qos(struct connection *conn);
 /* receive a PROXY protocol header over a connection */
 int conn_recv_proxy(struct connection *conn, int flag);
 int conn_send_proxy(struct connection *conn, unsigned int flag);

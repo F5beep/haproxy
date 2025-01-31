@@ -48,7 +48,7 @@
 #include <haproxy/tools.h>
 
 
-static int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen);
+int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int tcp_suspend_receiver(struct receiver *rx);
 static int tcp_resume_receiver(struct receiver *rx);
 static void tcp_enable_listener(struct listener *listener);
@@ -189,7 +189,7 @@ struct protocol proto_mptcpv4 = {
 #endif
 };
 
-INITCALL1(STG_REGISTER, protocol_register, &proto_mptcpv4);
+//INITCALL1(STG_REGISTER, protocol_register, &proto_mptcpv4);
 
 /* Most fields are copied from proto_tcpv6 */
 struct protocol proto_mptcpv6 = {
@@ -938,6 +938,45 @@ static int tcp_get_info(struct connection *conn, long long int *info, int info_n
 	return 0;
 }
 #endif /* TCP_INFO */
+
+struct connection *qos_accept_conn(struct listener *l, int *status);
+
+struct protocol proto_qos = {
+	.name = "qos",
+
+	.listen         = tcp_bind_listener,
+	.enable         = tcp_enable_listener,
+	.add            = default_add_listener,
+	.accept_conn    = qos_accept_conn,
+	.ctrl_init      = sock_conn_ctrl_init,
+	.ctrl_close     = sock_conn_ctrl_close,
+	//.drain          = sock_drain,
+	.check_events   = sock_check_events,
+	//.ignore_events  = sock_ignore_events,
+	//.get_info       = tcp_get_info,
+
+	/* address family */
+	.fam            = &proto_fam_inet4,
+
+	.proto_type     = PROTO_TYPE_STREAM,
+	.sock_type      = SOCK_STREAM,
+	.sock_prot      = IPPROTO_MPTCP,
+	.rx_enable      = sock_enable,
+	.rx_disable     = sock_disable,
+	.rx_unbind      = sock_unbind,
+	.rx_listening   = sock_accepting_conn,
+	.default_iocb   = sock_accept_iocb,
+};
+
+struct connection *qos_accept_conn(struct listener *l, int *status)
+{
+	struct connection *conn = sock_accept_conn(l, status);
+	if (conn)
+		conn->flags |= CO_FL_ACCEPT_QOS;
+	return conn;
+}
+
+INITCALL1(STG_REGISTER, protocol_register, &proto_qos);
 
 
 /*

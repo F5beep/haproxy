@@ -979,6 +979,41 @@ static inline size_t get_tlv_length(const struct tlv *src)
 	return (src->length_hi << 8) | src->length_lo;
 }
 
+int conn_recv_qos(struct connection *conn)
+{
+	int ret;
+
+	if (!conn_ctrl_ready(conn))
+		goto fail;
+
+	if (!fd_recv_ready(conn->handle.fd))
+		goto not_ready;
+
+	while (1) {
+		ret = recv(conn->handle.fd, trash.area, trash.size, MSG_PEEK);
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				fd_cant_recv(conn->handle.fd);
+				goto fail;
+			}
+		}
+		trash.data = ret;
+		break;
+	}
+
+ 	conn->flags &= ~CO_FL_ACCEPT_QOS;
+ 	return 1;
+
+ not_ready:
+	return 0;
+
+ fail:
+	conn->flags |= CO_FL_ERROR;
+	return 0;
+}
+
 /* This handshake handler waits a PROXY protocol header at the beginning of the
  * raw data stream. The header looks like this :
  *

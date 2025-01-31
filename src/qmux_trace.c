@@ -132,7 +132,7 @@ INITCALL1(STG_REGISTER, trace_register_source, TRACE_SOURCE);
 
 void qmux_dump_qcc_info(struct buffer *msg, const struct qcc *qcc)
 {
-	const struct quic_conn *qc = qcc->conn->handle.qc;
+	//const struct quic_conn *qc = qcc->conn->handle.qc;
 
 	chunk_appendf(msg, " qcc=%p(F)", qcc);
 	if (qcc->conn->handle.qc)
@@ -141,7 +141,7 @@ void qmux_dump_qcc_info(struct buffer *msg, const struct qcc *qcc)
 
 	chunk_appendf(msg, " .tx=%llu %llu/%llu bwnd=%llu/%llu",
 	              (ullong)qcc->tx.fc.off_soft, (ullong)qcc->tx.fc.off_real, (ullong)qcc->tx.fc.limit,
-	              (ullong)qcc->tx.buf_in_flight, (ullong)qc->path->cwnd);
+	              (ullong)qcc->tx.buf_in_flight, /* (ullong)qc->path->cwnd */ 0ULL);
 }
 
 void qmux_dump_qcs_info(struct buffer *msg, const struct qcs *qcs)

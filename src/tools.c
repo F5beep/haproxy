@@ -1141,6 +1141,13 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 		proto_type = PROTO_TYPE_DGRAM;
 		ctrl_type = SOCK_STREAM;
 	}
+	else if (strncmp(str2, "qos@", 4) == 0) {
+		str2 += 4;
+		ss.ss_family = AF_INET;
+		proto_type = PROTO_TYPE_STREAM;
+		ctrl_type = SOCK_STREAM;
+		alt_proto = 1;
+	}
 	else if (strncmp(str2, "fd@", 3) == 0) {
 		str2 += 3;
 		ss.ss_family = AF_CUST_EXISTING_FD;

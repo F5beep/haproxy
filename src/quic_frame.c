@@ -17,7 +17,7 @@
 #include <haproxy/quic_enc.h>
 #include <haproxy/quic_frame.h>
 #include <haproxy/quic_rx-t.h>
-#include <haproxy/quic_tp-t.h>
+#include <haproxy/quic_tp.h>
 #include <haproxy/quic_trace.h>
 #include <haproxy/quic_tx.h>
 #include <haproxy/trace.h>
@@ -1007,6 +1007,43 @@ static int quic_build_handshake_done_frame(unsigned char **pos, const unsigned c
 	return 1;
 }
 
+static int quic_build_qs_tp_frame(unsigned char **pos, const unsigned char *end,
+                                  struct quic_frame *frm, struct quic_conn *conn)
+{
+	unsigned char *old = *pos;
+	struct buffer buf;
+
+	if (end - *pos < 8)
+		return 0;
+
+	buf = b_make((char *)*pos, end - *pos, 0, 0);
+	if (!b_quic_enc_int(&buf, 0, 8))
+		return 0;
+
+	//if (!quic_enc_int(pos, end, 0))
+	//	return 0;
+	*pos += 8;
+	if (!quic_transport_param_enc_int(pos, end, QUIC_TP_MAX_IDLE_TIMEOUT, 30000))
+		return 0;
+	if (!quic_transport_param_enc_int(pos, end, QUIC_TP_INITIAL_MAX_DATA, 16384))
+		return 0;
+	if (!quic_transport_param_enc_int(pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL, 16384))
+		return 0;
+	if (!quic_transport_param_enc_int(pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE, 16384))
+		return 0;
+	if (!quic_transport_param_enc_int(pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_UNI, 16384))
+		return 0;
+	if (!quic_transport_param_enc_int(pos, end, QUIC_TP_INITIAL_MAX_STREAMS_BIDI, 100))
+		return 0;
+	if (!quic_transport_param_enc_int(pos, end, QUIC_TP_INITIAL_MAX_STREAMS_UNI, 100))
+		return 0;
+
+	buf = b_make((char *)old, 8, 0, 0);
+	b_quic_enc_int(&buf, *pos - 8 - old, 8);
+
+	return 1;
+}
+
 /* Parse a HANDSHAKE_DONE frame at QUIC layer at <pos> buffer position with <end> as end into <frm> frame.
  * Always succeed.
  */
@@ -1014,6 +1051,17 @@ static int quic_parse_handshake_done_frame(struct quic_frame *frm, struct quic_c
                                            const unsigned char **pos, const unsigned char *end)
 {
 	/* No field */
+	return 1;
+}
+
+static int quic_parse_qs_tp(struct quic_frame *frm, struct quic_conn *qc,
+                            const unsigned char **pos, const unsigned char *end)
+{
+	struct qf_qs_tp *qs_tp_frm = &frm->qs_tp;
+	uint64_t len;
+
+	quic_dec_int(&len, pos, end);
+	quic_transport_params_decode(&qs_tp_frm->tps, 1, *pos, end);
 	return 1;
 }
 
@@ -1115,7 +1163,7 @@ int qc_parse_frm(struct quic_frame *frm, struct quic_rx_packet *pkt,
 		goto leave;
 	}
 
-	frm->type = *(*pos)++;
+	quic_dec_int(&frm->type, pos, end);
 	if (frm->type >= QUIC_FT_MAX) {
 		/* RFC 9000 12.4. Frames and Frame Types
 		 *
@@ -1127,20 +1175,29 @@ int qc_parse_frm(struct quic_frame *frm, struct quic_rx_packet *pkt,
 		goto leave;
 	}
 
-	parser = &quic_frame_parsers[frm->type];
-	if (!(parser->mask & (1U << pkt->type))) {
-		TRACE_DEVEL("unauthorized frame", QUIC_EV_CONN_PRSFRM, qc, frm);
-		goto leave;
+	if (frm->type == QUIC_FT_QS_TP) {
+		if (!quic_parse_qs_tp(frm, qc, pos, end)) {
+			TRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, qc, frm);
+			goto leave;
+		}
 	}
+	else {
+		parser = &quic_frame_parsers[frm->type];
+		if (pkt && !(parser->mask & (1U << pkt->type))) {
+			TRACE_DEVEL("unauthorized frame", QUIC_EV_CONN_PRSFRM, qc, frm);
+			goto leave;
+		}
 
-	if (!parser->func(frm, qc, pos, end)) {
-		TRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, qc, frm);
-		goto leave;
+		if (!parser->func(frm, qc, pos, end)) {
+			TRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, qc, frm);
+			goto leave;
+		}
 	}
 
 	TRACE_PROTO("RX frm", QUIC_EV_CONN_PSTRM, qc, frm);
 
-	pkt->flags |= parser->flags;
+	if (pkt)
+		pkt->flags |= parser->flags;
 
 	ret = 1;
  leave:
@@ -1163,25 +1220,30 @@ int qc_build_frm(unsigned char **pos, const unsigned char *end,
 
 	TRACE_ENTER(QUIC_EV_CONN_BFRM, qc);
 	builder = &quic_frame_builders[frm->type];
-	if (!(builder->mask & (1U << pkt->type))) {
+	if (pkt && !(builder->mask & (1U << pkt->type))) {
 		/* XXX This it a bug to send an unauthorized frame with such a packet type XXX */
 		TRACE_ERROR("unauthorized frame", QUIC_EV_CONN_BFRM, qc, frm);
 		BUG_ON(!(builder->mask & (1U << pkt->type)));
 	}
 
-	if (end <= p) {
+	TRACE_PROTO("TX frm", QUIC_EV_CONN_BFRM, qc, frm);
+	if (!quic_enc_int(&p, end, frm->type)) {
 		TRACE_DEVEL("not enough room", QUIC_EV_CONN_BFRM, qc, frm);
 		goto leave;
 	}
 
-	TRACE_PROTO("TX frm", QUIC_EV_CONN_BFRM, qc, frm);
-	*p++ = frm->type;
-	if (!quic_frame_builders[frm->type].func(&p, end, frm, qc)) {
-		TRACE_ERROR("frame building error", QUIC_EV_CONN_BFRM, qc, frm);
-		goto leave;
+	if (frm->type == QUIC_FT_QS_TP) {
+		quic_build_qs_tp_frame(&p, end, frm, NULL);
+	}
+	else {
+		if (!quic_frame_builders[frm->type].func(&p, end, frm, qc)) {
+			TRACE_ERROR("frame building error", QUIC_EV_CONN_BFRM, qc, frm);
+			goto leave;
+		}
 	}
 
-	pkt->flags |= builder->flags;
+	if (pkt)
+		pkt->flags |= builder->flags;
 	*pos = p;
 
 	ret = 1;

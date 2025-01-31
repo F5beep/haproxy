@@ -70,6 +70,14 @@ struct task *xprt_handshake_io_cb(struct task *t, void *bctx, unsigned int state
 			goto out;
 		}
 
+	if (conn->flags & CO_FL_ACCEPT_QOS) {
+		if (!conn_recv_qos(conn)) {
+			ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_RECV,
+			    &ctx->wait_event);
+			goto out;
+		}
+	}
+
 	if (conn->flags & CO_FL_SEND_PROXY)
 		if (!conn_send_proxy(conn, CO_FL_SEND_PROXY)) {
 			ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND,

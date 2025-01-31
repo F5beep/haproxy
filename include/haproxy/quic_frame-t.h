@@ -78,6 +78,9 @@ enum quic_frame_type {
 	QUIC_FT_CONNECTION_CLOSE     = 0x1c,
 	QUIC_FT_CONNECTION_CLOSE_APP = 0x1d,
 	QUIC_FT_HANDSHAKE_DONE       = 0x1e,
+
+	QUIC_FT_QS_TP                = 0x3f5153300d0a0d0a,
+
 	/* Do not insert enums after the following one. */
 	QUIC_FT_MAX
 };
@@ -243,10 +246,14 @@ struct qf_connection_close_app {
 	unsigned char reason_phrase[QUIC_CC_REASON_PHRASE_MAXLEN];
 };
 
+struct qf_qs_tp {
+	struct quic_transport_params tps;
+};
+
 struct quic_frame {
 	struct list list;           /* List elem from parent elem (typically a Tx packet instance, a PKTNS or a MUX element). */
 	struct quic_tx_packet *pkt; /* Last Tx packet used to send the frame. */
-	unsigned char type;         /* QUIC frame type. */
+	uint64_t type;              /* QUIC frame type. */
 	union {
 		struct qf_padding padding;
 		struct qf_ack ack;
@@ -270,6 +277,7 @@ struct quic_frame {
 		struct qf_path_challenge_response path_challenge_response;
 		struct qf_connection_close connection_close;
 		struct qf_connection_close_app connection_close_app;
+		struct qf_qs_tp qs_tp;
 	};
 	struct quic_frame *origin;  /* Parent frame. Set if frame is a duplicate (used for retransmission). */
 	struct list reflist;        /* List head containing duplicated children frames. */

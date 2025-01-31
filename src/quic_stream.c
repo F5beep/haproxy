@@ -76,8 +76,8 @@ struct qc_stream_desc *qc_stream_desc_new(uint64_t id, enum qcs_type type, void 
 	}
 	else {
 		stream->by_id.key = id;
-		eb64_insert(&qc->streams_by_id, &stream->by_id);
-		qc->rx.strms[type].nb_streams++;
+		//eb64_insert(&qc->streams_by_id, &stream->by_id);
+		//qc->rx.strms[type].nb_streams++;
 	}
 	stream->qc = qc;
 
@@ -423,8 +423,10 @@ void qc_stream_desc_free(struct qc_stream_desc *stream, int closing)
 	if (free_count)
 		offer_buffers(NULL, free_count);
 
+#if 0
 	if (stream->by_id.key != (uint64_t)-1)
 		eb64_delete(&stream->by_id);
+#endif
 	pool_free(pool_head_quic_stream_desc, stream);
 }
 
