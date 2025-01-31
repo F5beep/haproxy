@@ -1373,3 +1373,23 @@ We can do a bit better to respect the tgrp min/max as well: we can count what
 it implies in terms of number of tgrps (#LLC or clusters) and decide to refrain
 from adding theads which would exceed max_tgrp, but we'd possibly continue to
 add score<1000 CPUs until at least enough threads to reach min_tgrp.
+
+######## new captures ###########
+CIX-P1 / radxa Orion O6 (no topology exported):
+$ ~/haproxy/haproxy  -dc -f /dev/null
+grp=[1..12] thr=[1..12]
+first node = 0
+Note: threads already set to 12
+going to start with nbthread=12 nbtgroups=1
+[keep] thr=  0 -> cpu=  0 pk=00 no=-1 di=00 cl=000 ts=000 capa=1024
+[keep] thr=  1 -> cpu=  1 pk=00 no=-1 di=00 cl=000 ts=001 capa=278
+[keep] thr=  2 -> cpu=  2 pk=00 no=-1 di=00 cl=000 ts=002 capa=278
+[keep] thr=  3 -> cpu=  3 pk=00 no=-1 di=00 cl=000 ts=003 capa=278
+[keep] thr=  4 -> cpu=  4 pk=00 no=-1 di=00 cl=000 ts=004 capa=278
+[keep] thr=  5 -> cpu=  5 pk=00 no=-1 di=00 cl=000 ts=005 capa=905
+[keep] thr=  6 -> cpu=  6 pk=00 no=-1 di=00 cl=000 ts=006 capa=905
+[keep] thr=  7 -> cpu=  7 pk=00 no=-1 di=00 cl=000 ts=007 capa=866
+[keep] thr=  8 -> cpu=  8 pk=00 no=-1 di=00 cl=000 ts=008 capa=866
+[keep] thr=  9 -> cpu=  9 pk=00 no=-1 di=00 cl=000 ts=009 capa=984
+[keep] thr= 10 -> cpu= 10 pk=00 no=-1 di=00 cl=000 ts=010 capa=984
+[keep] thr= 11 -> cpu= 11 pk=00 no=-1 di=00 cl=000 ts=011 capa=1024
