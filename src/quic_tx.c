@@ -1354,6 +1354,157 @@ static inline size_t max_available_room(size_t sz, size_t *len_sz)
 	return ret;
 }
 
+uint64_t len_sz(uint64_t len, size_t room)
+{
+	size_t room_sz, left;
+
+	room_sz = quic_int_getsize(room);
+	left = room - room_sz;
+	if (room_sz > quic_int_getsize(left)) {
+		while (quic_int_getsize(left + 1) + left + 1 <= room)
+			++left;
+	}
+
+	return MIN(len, left);
+}
+
+int stream_frm_len(size_t room, struct quic_frame *frm)
+{
+	size_t room_sz, left = 0, flen, len;
+
+	if (frm->type >= QUIC_FT_STREAM_8 || frm->type <= QUIC_FT_STREAM_F) {
+		flen = 1;
+		flen += quic_int_getsize(frm->stream.id);
+		if (frm->type & QUIC_STREAM_FRAME_TYPE_OFF_BIT)
+			flen += quic_int_getsize(frm->stream.offset);
+		len = frm->stream.len;
+	}
+	else if (frm->type == QUIC_FT_CRYPTO) {
+		flen = 1;
+		flen += quic_int_getsize(frm->crypto.offset);
+		len = frm->crypto.len;
+	}
+	else {
+		ABORT_NOW();
+	}
+
+	if (flen > room)
+		return -1;
+
+	if (len) {
+		room -= flen;
+		room_sz = quic_int_getsize(room);
+		left = room - room_sz;
+		if (!left)
+			return -1;
+
+		if (room_sz > quic_int_getsize(left)) {
+			while (quic_int_getsize(left + 1) + left + 1 <= room)
+				++left;
+		}
+
+		flen += quic_int_getsize(MIN(len, left));
+		flen += MIN(len, left);
+	}
+
+	return MIN(len, left);
+}
+
+size_t calculate_stream_frm_len(size_t room, struct quic_frame *frm, size_t *split_size)
+{
+	size_t room_sz, left = 0, len, flen = 0;
+
+	*split_size = 0;
+
+	if (frm->type >= QUIC_FT_STREAM_8 || frm->type <= QUIC_FT_STREAM_F) {
+		flen = 1;
+		flen += quic_int_getsize(frm->stream.id);
+		if (frm->type & QUIC_STREAM_FRAME_TYPE_OFF_BIT)
+			flen += quic_int_getsize(frm->stream.offset);
+		len = frm->stream.len;
+	}
+	else if (frm->type == QUIC_FT_CRYPTO) {
+		flen = 1;
+		flen += quic_int_getsize(frm->crypto.offset);
+		len = frm->crypto.len;
+	}
+	else {
+		ABORT_NOW();
+	}
+
+	if (flen > room)
+		return 0;
+
+	if (len) {
+		room -= flen;
+		room_sz = quic_int_getsize(room);
+		if (room <= room_sz)
+			return 0;
+		left = room - room_sz;
+
+		if (room_sz > quic_int_getsize(left)) {
+			while (quic_int_getsize(left + 1) + left + 1 <= room)
+				++left;
+		}
+
+		if (len > left) {
+			flen += quic_int_getsize(left);
+			flen += left;
+			*split_size = left;
+		}
+		else {
+			flen += quic_int_getsize(len);
+			flen += len;
+		}
+	}
+
+	return flen;
+}
+
+struct quic_frame *split_stream_frm(struct quic_frame *frm, uint64_t left)
+{
+	struct quic_frame *split;
+	struct buffer cf_buf;
+
+	split = qc_frm_alloc(frm->type);
+	if (!split)
+		return NULL;
+
+	if (frm->type >= QUIC_FT_STREAM_8 || frm->type <= QUIC_FT_STREAM_F) {
+		split->stream.stream = frm->stream.stream;
+		split->stream.buf = frm->stream.buf;
+		split->stream.id = frm->stream.id;
+		split->stream.offset = frm->stream.offset;
+		split->stream.len = left;
+		split->type |= QUIC_STREAM_FRAME_TYPE_LEN_BIT;
+		split->type &= ~QUIC_STREAM_FRAME_TYPE_FIN_BIT;
+		split->stream.data = frm->stream.data;
+		split->stream.dup = frm->stream.dup;
+
+		if (frm->origin) {
+			/* This <frm> frame was duplicated */
+			LIST_APPEND(&frm->origin->reflist, &split->ref);
+			split->origin = frm->origin;
+			/* Detach this STREAM frame from its origin */
+			LIST_DEL_INIT(&frm->ref);
+			frm->origin = NULL;
+		}
+
+		frm->type |= QUIC_STREAM_FRAME_TYPE_OFF_BIT;
+		cf_buf = b_make(b_orig(frm->stream.buf),
+		                b_size(frm->stream.buf),
+		                (char *)frm->stream.data - b_orig(frm->stream.buf), 0);
+		frm->stream.len -= left;
+		frm->stream.offset += left;
+		frm->stream.data = (unsigned char *)b_peek(&cf_buf, left);
+	}
+	else {
+		ABORT_NOW();
+	}
+
+	return split;
+}
+
 /* This function computes the maximum data we can put into a buffer with <sz> as
  * size prefixed with a variable-length field "Length" whose value is the
  * remaining data length, already filled of <ilen> bytes which must be taken
@@ -1583,8 +1734,99 @@ static int qc_build_frms(struct list *outlist, struct list *inlist,
                          struct quic_enc_level *qel,
                          struct quic_conn *qc)
 {
+	size_t splitdum;
 	int ret;
 	struct quic_frame *cf, *cfbak;
+
+#if 0
+	BUG_ON(len_sz(62, 61) != 60);
+	BUG_ON(len_sz(62, 62) != 61);
+	BUG_ON(len_sz(62, 63) != 62);
+
+	BUG_ON(len_sz(63, 62) != 61); // -> 1
+	BUG_ON(len_sz(63, 63) != 62); // -> 1
+	BUG_ON(len_sz(63, 64) != 63); // -> 2
+	BUG_ON(len_sz(63, 65) != 63); // -> 2
+
+	BUG_ON(len_sz(64, 62) != 61); // -> 1
+	BUG_ON(len_sz(64, 63) != 62); // -> 1
+	BUG_ON(len_sz(64, 64) != 63); // -> 2
+	BUG_ON(len_sz(64, 65) != 63); // -> 2
+	BUG_ON(len_sz(64, 66) != 64); // -> 2 OK
+
+	BUG_ON(len_sz(65, 62) != 61); // -> 1
+	BUG_ON(len_sz(65, 63) != 62); // -> 1
+	BUG_ON(len_sz(65, 64) != 63); // -> 2
+	BUG_ON(len_sz(65, 65) != 63); // -> 2
+	BUG_ON(len_sz(65, 66) != 64); // -> 2 OK
+	BUG_ON(len_sz(65, 67) != 65); // -> 2
+
+	BUG_ON(len_sz(16380, 16380) != 16378);
+	BUG_ON(len_sz(16380, 16381) != 16379);
+	BUG_ON(len_sz(16380, 16382) != 16380);
+	BUG_ON(len_sz(16380, 16383) != 16380);
+
+	BUG_ON(len_sz(16381, 16380) != 16378);
+	BUG_ON(len_sz(16381, 16381) != 16379);
+	BUG_ON(len_sz(16381, 16382) != 16380);
+	BUG_ON(len_sz(16381, 16383) != 16381);
+	BUG_ON(len_sz(16381, 16384) != 16381);
+
+	BUG_ON(len_sz(16382, 16380) != 16378);
+	BUG_ON(len_sz(16382, 16381) != 16379);
+	BUG_ON(len_sz(16382, 16382) != 16380);
+	BUG_ON(len_sz(16382, 16383) != 16381);
+	BUG_ON(len_sz(16382, 16384) != 16382);
+	BUG_ON(len_sz(16382, 16385) != 16382);
+
+	BUG_ON(len_sz(16383, 16380) != 16378);
+	BUG_ON(len_sz(16383, 16381) != 16379);
+	BUG_ON(len_sz(16383, 16382) != 16380);
+	BUG_ON(len_sz(16383, 16383) != 16381);
+	BUG_ON(len_sz(16383, 16384) != 16382);
+	BUG_ON(len_sz(16383, 16385) != 16383);
+	BUG_ON(len_sz(16383, 16386) != 16383);
+
+	BUG_ON(len_sz(16384, 16380) != 16378); //-> 2
+	BUG_ON(len_sz(16384, 16381) != 16379); //-> 2
+	BUG_ON(len_sz(16384, 16382) != 16380); //-> 2
+	BUG_ON(len_sz(16384, 16383) != 16381); //-> 2
+	BUG_ON(len_sz(16384, 16384) != 16382); //-> 4
+	BUG_ON(len_sz(16384, 16385) != 16383); //-> 4
+	BUG_ON(len_sz(16384, 16386) != 16383);
+	BUG_ON(len_sz(16384, 16387) != 16383);
+	BUG_ON(len_sz(16384, 16388) != 16384);
+
+	BUG_ON(len_sz(16385, 16380) != 16378); //-> 2
+	BUG_ON(len_sz(16385, 16381) != 16379); //-> 2
+	BUG_ON(len_sz(16385, 16382) != 16380); //-> 2
+	BUG_ON(len_sz(16385, 16383) != 16381); //-> 2
+	BUG_ON(len_sz(16385, 16384) != 16382); //-> 4
+	BUG_ON(len_sz(16385, 16385) != 16383); //-> 4
+	BUG_ON(len_sz(16385, 16386) != 16383); //-> 4
+	BUG_ON(len_sz(16385, 16387) != 16383); //-> 4
+	BUG_ON(len_sz(16385, 16388) != 16384); //-> 4 OK
+	BUG_ON(len_sz(16385, 16389) != 16385);
+#endif
+
+	struct quic_frame frm2;
+	int res __maybe_unused;
+	frm2.type = QUIC_FT_STREAM_F;
+	frm2.stream.id = 0;
+	frm2.stream.offset = 1;
+	frm2.stream.len = 1;
+	//res = stream_frm_len(3, &frm2);
+	//BUG_ON(res != 0);
+	res = calculate_stream_frm_len(4, &frm2, &splitdum);
+	BUG_ON(res != 0);
+	res = calculate_stream_frm_len(5, &frm2, &splitdum);
+	BUG_ON(res != 5);
+
+	frm2.stream.len = 0;
+	res = calculate_stream_frm_len(16384, &frm2, &splitdum);
+	BUG_ON(res != 3 && !splitdum);
+	res = calculate_stream_frm_len(3, &frm2, &splitdum);
+	BUG_ON(res != 3 && !splitdum);
 
 	TRACE_ENTER(QUIC_EV_CONN_BCFRMS, qc);
 
@@ -1614,7 +1856,9 @@ static int qc_build_frms(struct list *outlist, struct list *inlist,
 	 */
 	list_for_each_entry_safe(cf, cfbak, inlist, list) {
 		/* header length, data length, frame length. */
-		size_t hlen, dlen, dlen_sz, avail_room, flen;
+		size_t hlen, dlen, dlen_sz __maybe_unused, avail_room __maybe_unused, flen;
+		struct quic_frame *split;
+		size_t split_size;
 
 		if (!room)
 			break;
@@ -1682,6 +1926,7 @@ static int qc_build_frms(struct list *outlist, struct list *inlist,
 					continue;
 				}
 			}
+#if 0
 			/* Note that these frames are accepted in short packets only without
 			 * "Length" packet field. Here, <*len> is used only to compute the
 			 * sum of the lengths of the already built frames for this packet.
@@ -1703,10 +1948,17 @@ static int qc_build_frms(struct list *outlist, struct list *inlist,
 			 * enough room for length field.
 			 */
 			if (cf->type & QUIC_STREAM_FRAME_TYPE_LEN_BIT) {
+				size_t dlen2;
 				dlen = QUIC_MIN((uint64_t)max_available_room(avail_room, &dlen_sz),
 				                cf->stream.len);
 				dlen_sz = quic_int_getsize(dlen);
 				flen = hlen + dlen_sz + dlen;
+
+				dlen2 = len_sz(cf->stream.len, avail_room);
+				BUG_ON(dlen2 != dlen);
+				flen = hlen + quic_int_getsize(dlen) + dlen;
+				dlen2 = stream_frm_len(room, cf);
+				BUG_ON((dlen && dlen != dlen2) || (!dlen && dlen2 != -1));
 			}
 			else {
 				dlen = QUIC_MIN((uint64_t)avail_room, cf->stream.len);
@@ -1782,6 +2034,29 @@ static int qc_build_frms(struct list *outlist, struct list *inlist,
 				                    new_cf->stream.offset,
 				                    new_cf->stream.len);
 			}
+#endif
+
+			flen = calculate_stream_frm_len(room, cf, &split_size);
+			if (!flen)
+				continue;
+
+			BUG_ON(split_size >= cf->stream.len);
+			if (split_size) {
+				split = split_stream_frm(cf, split_size);
+				if (!split)
+					continue;
+				LIST_APPEND(outlist, &split->list);
+				qc_stream_desc_send(split->stream.stream,
+				                    split->stream.offset,
+				                    split->stream.len);
+			}
+			else {
+				LIST_DEL_INIT(&cf->list);
+				LIST_APPEND(outlist, &cf->list);
+				qc_stream_desc_send(cf->stream.stream,
+				                    cf->stream.offset,
+				                    cf->stream.len);
+			}
 
 			/* TODO the MUX is notified about the frame sending via
 			 * previous qc_stream_desc_send call. However, the
@@ -1790,6 +2065,9 @@ static int qc_build_frms(struct list *outlist, struct list *inlist,
 			 * notified, the transport layer is responsible to
 			 * bufferize and resent the announced data later.
 			 */
+
+			*len += flen;
+			room -= flen;
 
 			break;
 
